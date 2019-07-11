@@ -5,30 +5,20 @@ Informações dos arquivos gerados pelo HYPERGRAPHSCLAM:
 Como fazer o mapa com o HYPERGRAPHSCLAM
 
 ==============================================================================
-0. Verifique se no seu computador tem as seguintes pastas, caso não tenha crie:
+1. Calibre a odometria. Documentação:
+ https://github.com/LCAD-UFES/carmen_lcad/tree/master/src/odometry_calibration
+ou
+ ~/carmen_lcad/src/odometry_calibration/README.txt
 
-    ```
-    mkdir /dados/tmp
-    mkdir /dados/tmp/sick
-    mkdir /dados/tmp/velodyne
-    mkdir /dados/tmp/lgm
-    mkdir /dados/tmp/lgm/sick
-    mkdir /dados/tmp/lgm/velodyne
-    mkdir /dados/tmp/images
-    ```
+Os dados de saída da calibração devem ser colocados no arquivo src/hypergraphsclam/config/parser_config.txt em:
+ V_MULT_ODOMETRY_BIAS <primeiro parâmetro do bias v da saída da calibração>
+ PHI_MULT_ODOMETRY_BIAS <primeiro parâmetro do bias phi da saída da calibração>
+ PHI_ADD_ODOMETRY_BIAS <segundo parâmetro do bias phi da saída da calibração>
+e no carmen.ini:
+ robot_v_multiplier
+ robot_phi_multiplier
+ robot_phi_bias
 
-Alem disso, apagar os arquivos antigos nessas pastas
-==============================================================================
-
-==============================================================================
-1. Calibre a odometria:
-https://github.com/LCAD-UFES/carmen_lcad/tree/master/src/odometry_calibration
-
-Os bias de saída da calibração devem ser colocados no arquivo src/hypergraphsclam/config/parser_config.txt em:
-
-V_MULT_ODOMETRY_BIAS <primeiro parâmetro do bias v da saída da calibração>
-PHI_MULT_ODOMETRY_BIAS <primeiro parâmetro do bias phi da saída da calibração>
-PHI_ADD_ODOMETRY_BIAS <segundo parâmetro do bias phi da saída da calibração>
 ==============================================================================
 
 2. Execute o parser do log (ele leh o log e constroi um hypergrafo) dentro da pasta src/hypergraphsclam/
@@ -108,7 +98,7 @@ Os arquivos acima estão no seguinte formato:
 
     ```
     cd src/hypergraphsclam
-    ./hypergraphsclam sync-<seu log>.txt poses-opt-<seu log>.txt
+    ./hypergraphsclam sync-<seu log>.txt poses-opt-<seu log>
     ```
 
     Exemplo:
@@ -140,6 +130,11 @@ O otimizador gera 4 arquivos:
 Os quatro arquivos acima estão no seguinte formato:
     x y theta timeStamp cos(theta) sin(theta)
 
+Os dados de "poses-opt-log_volta_da_ufes-20171106.txt" podem estar fora de ordem (timestamp). Assim, 
+reoordene com sort (troque abaixo para o nome de seu log)
+    sort -k 4 poses-opt-log_volta_da_ufes-20171106.txt > caco.txt
+    mv caco.txt poses-opt-log_volta_da_ufes-20171106.txt
+
 Após a otimização, os dados podem ser visualizados pelo gnuplot:
     Exemplo:
     ```
@@ -148,25 +143,31 @@ Após a otimização, os dados podem ser visualizados pelo gnuplot:
     replot '<gps.txt ou odom.txt ou velodyne.txt ou poses>' u 1:2 w l
     ```
 
+Talvez o aquivo de poses não esteja ordenado pelo timestamp após rodar a otimização. Para ordenar pelo timestamp execute um `sort` para a 4ª coluna. Exemplo:
+    ```
+    sort -k4 poses-opt-log_dante_michelini-20181116.txt > sorted-poses-opt-log_dante_michelini-20181116.txt
+    ```
+
 4. Modifique no process-volta_da_ufes_playback_viewer_3D_map_generation_hypergraphsclam.ini as saidas dos programas playback, rdd_build, graphslam_publish:
  playback 		support 	1		0			./playback <seu log>.txt
  rndf_build		interface	1		0			./rddf_build ../data/rndf/rddf_<seu log>.txt
  publish_poses		graphslam	0		0   			./graphslam_publish poses-opt-<seu log>.txt
 
-5. Modifique o carmen-ford-escape.ini para ativar a criacao de mapas comentando e descomentando o trecho abaixo (ver o carmen-ford-escape.ini).
+5. As seguintes variaveis do carmen-ford-escape.ini serao utilizadas na criacao de mapas:
 
-## Use the parameters below for building maps
-mapper_update_and_merge_with_snapshot_map		off
-mapper_global_map 					off
-mapper_merge_with_offline_map 				off
-mapper_decay_to_offline_map				off
-mapper_update_and_merge_with_mapper_saved_maps		on
-mapper_build_snapshot_map				off
-mapper_velodyne_range_max		 		70.0
-mapper_velodyne_range_max_factor 			4.0
-mapper_create_map_sum_and_count				off
-mapper_use_remission					on
-mapper_laser_ldmrs 					off
+## The parameters below are used with mapper -mapping_mode options
+mapper_mapping_mode_on_update_and_merge_with_snapshot_map	off
+mapper_mapping_mode_on_global_map 				off
+mapper_mapping_mode_on_merge_with_offline_map 			off
+mapper_mapping_mode_on_decay_to_offline_map			off
+mapper_mapping_mode_on_update_and_merge_with_mapper_saved_maps	on
+mapper_mapping_mode_on_build_snapshot_map			off
+mapper_mapping_mode_on_velodyne_range_max		 	70.0
+mapper_mapping_mode_on_velodyne_range_max_factor 		4.0
+mapper_mapping_mode_on_create_map_sum_and_count			off
+mapper_mapping_mode_on_use_remission				on
+mapper_mapping_mode_on_laser_ldmrs 				off
+
 
 6. Se existir a pasta data/mapper_teste2 limpe-a com o comando "rm -rf $CARMEN_HOME/data/mapper_teste2/*".
 Caso a pasta não exista, utilize o comando "mkdir $CARMEN_HOME/data/mapper_teste2" para criá-la.
@@ -179,7 +180,7 @@ Caso a pasta não exista, utilize o comando "mkdir $CARMEN_HOME/data/mapper_test
 
 10. Acione o play no playback e espere terminar de tocar o log.
 
-##OBS: selecionar map na aba map do carmen navegatior
+## OBS: selecionar a opção "Map" no menu "Maps" na janela "Carmen-LCAD Navigator" (Ou aperte ctrl+m)
 
 11. Ao final do log seu mapa está pronto em ../data/mapper_teste2/ !!!! Pode matar o proccontrol no terminal e copiar seu novo mapa para seu lugar definitivo.
 

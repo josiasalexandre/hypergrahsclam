@@ -12,7 +12,7 @@
 using namespace hyper;
 
 // basic constructor
-StampedGPSPose::StampedGPSPose(unsigned msg_id) : StampedMessage(msg_id), gps_measurement(0.0, 0.0, M_PI), gps_std(0.0) {}
+StampedGPSPose::StampedGPSPose(unsigned msg_id) : StampedMessage(msg_id), gps_measurement(0.0, 0.0, 0.0), gps_std(0.0), gps_id("0") {}
 
 // basic destructor
 StampedGPSPose::~StampedGPSPose() {}
@@ -23,12 +23,12 @@ bool StampedGPSPose::FromCarmenLog(std::stringstream &ss)
     // helpers
     double lt_dm, lt, lg_dm, lg, sl;
     char lt_orientation, lg_orientation;
-    int quality, gps_id;
+    int quality;
 
     // get the gps id
     ss >> gps_id;
-
-    if (1 == gps_id)
+    
+    if (StampedGPSPose::gps_pose_delays.end() != StampedGPSPose::gps_pose_delays.find(gps_id))
     {
         // discards the second value
         SkipValues(ss, 1);
@@ -60,6 +60,8 @@ bool StampedGPSPose::FromCarmenLog(std::stringstream &ss)
         // get the timestamp
         ss >> StampedMessage::timestamp;
 
+        StampedMessage::timestamp += StampedGPSPose::gps_pose_delays[gps_id].second;
+
         // @Filipe: desvios padrao para cada modo do GPS Trimble.
         // @Filipe: OBS: Multipliquei os stds por 2 no switch abaixo para dar uma folga.
         // 0: DBL_MAX
@@ -71,16 +73,16 @@ bool StampedGPSPose::FromCarmenLog(std::stringstream &ss)
         switch (quality)
         {
             case 1:
-                gps_std = 16.0;
+                gps_std = 20.0;
                 break;
             case 2:
-                gps_std = 4.0;
+                gps_std = 20.0;
                 break;
             case 4:
-                gps_std = 0.4;
+                gps_std = 1.0;
                 break;
             case 5:
-                gps_std = 0.1;
+                gps_std = 2.5;
                 break;
             default:
                 gps_std = std::numeric_limits<double>::max();
@@ -108,6 +110,10 @@ bool StampedGPSPose::FromCarmenLog(std::stringstream &ss)
         // update the measure without orientation
         gps_measurement.setTranslation(Eigen::Vector2d(utm.y, -utm.x));
 
+        // WARNING
+        // WE NEED TO TAKE CARE OF THE YAW VALUES
+        gps_measurement = gps_measurement * StampedGPSPose::gps_pose_delays[gps_id].first;
+
         // set the estimate
         StampedMessage::est = gps_measurement;
 
@@ -118,9 +124,11 @@ bool StampedGPSPose::FromCarmenLog(std::stringstream &ss)
     return false;
 }
 
-
 // get the stamped message type
 StampedMessageType StampedGPSPose::GetType()
 {
     return StampedGPSMessage;
 }
+
+// the external identifier
+std::unordered_map<std::string, std::pair<g2o::SE2, double>> StampedGPSPose::gps_pose_delays;

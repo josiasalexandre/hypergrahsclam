@@ -44,6 +44,8 @@ HyperGraphSclamOptimizer::HyperGraphSclamOptimizer(int argc, char **argv) :
         external_loop(DEFAULT_OPTIMIZER_OUTER_ITERATIONS),
         internal_loop(DEFAULT_OPTIMIZER_INNER_POSE_ITERATIONS),
         optimizer_inner_odom_calib_iterations(DEFAULT_OPTIMIZER_INNER_ODOM_CALIB_ITERATIONS),
+        fake_gps_clustering_distance(DEFAULT_FAKE_GPS_CLUSTERING_DISTANCE),
+		gps_sparsity_threshold(DEFAULT_GPS_SPARSITY_THRESHOLD),
         use_gps(false),
         use_velodyne_seq(false),
         use_velodyne_loop(false),
@@ -51,6 +53,7 @@ HyperGraphSclamOptimizer::HyperGraphSclamOptimizer(int argc, char **argv) :
         use_sick_loop(false),
         use_bumblebee_seq(false),
         use_bumblebee_loop(false),
+        use_odometry(false),
         gps_origin(0.0, 0.0),
         optimizer(nullptr),
         factory(nullptr),
@@ -217,6 +220,14 @@ void HyperGraphSclamOptimizer::ArgsParser(int argc, char **argv)
                 {
                     ss >> optimizer_inner_odom_calib_iterations;
                 }
+                else if ("FAKE_GPS_CLUSTERING_DISTANCE" == str)
+                {
+                    ss >> fake_gps_clustering_distance;
+                }
+                else if ("GPS_SPARSITY_THRESHOLD" == str)
+                {
+                	ss >> gps_sparsity_threshold;
+                }
                 else if ("USE_GPS" == str)
                 {
                     use_gps = true;
@@ -244,6 +255,10 @@ void HyperGraphSclamOptimizer::ArgsParser(int argc, char **argv)
                 else if ("USE_BUMBLEBEE_LOOP" == str)
                 {
                     use_bumblebee_loop = true;
+                }
+                else if ("USE_ODOMETRY" == str)
+                {
+                    use_odometry = true;
                 }
             }
 
@@ -299,23 +314,21 @@ void HyperGraphSclamOptimizer::RegisterCustomTypes()
 // initialize the sparse optimizer
 void HyperGraphSclamOptimizer::InitializeOptimizer()
 {
+    
     // creates a new sparse optimizer in memmory
-    optimizer = new g2o::SparseOptimizer;
+    optimizer = new g2o::SparseOptimizer();
 
     // allocate a new cholmod solver
-    HyperCholmodSolver *cholmod_solver = new HyperCholmodSolver();
+    std::unique_ptr<HyperCholmodSolver> cholmod_solver = g2o::make_unique<HyperCholmodSolver>();
 
     // the block ordering
     cholmod_solver->setBlockOrdering(false);
 
     // the base solver
-    g2o::Solver *solver = new HyperBlockSolver(cholmod_solver);
-
-    // the base solver
-    g2o::OptimizationAlgorithm *optimization_algorithm = new g2o::OptimizationAlgorithmGaussNewton(solver);
-
+    g2o::OptimizationAlgorithm *solver = new g2o::OptimizationAlgorithmGaussNewton(g2o::make_unique<HyperBlockSolver>(std::move(cholmod_solver)));
+    
     // set the cholmod solver
-    optimizer->setAlgorithm(optimization_algorithm);
+    optimizer->setAlgorithm(solver);
 
     // set the verbose mode
     optimizer->setVerbose(true);
@@ -418,7 +431,6 @@ void HyperGraphSclamOptimizer::AddParametersVertices()
         // try to save the current vertex to the optimizer
         if (!optimizer->addVertex(odom_param))
         {
-
             throw std::runtime_error("Could not add the odom ackerman params calibration vertex to the optimizer!");
         }
     }
@@ -773,7 +785,6 @@ void HyperGraphSclamOptimizer::RemoveUndesiredDisplacements(double threshold)
 // remove gps messages
 void HyperGraphSclamOptimizer::MakeGPSSparse()
 {
-
     if (5 < gps_buffer.size())
     {
         // iterators
@@ -792,7 +803,7 @@ void HyperGraphSclamOptimizer::MakeGPSSparse()
 
             double diff = (next_t - last_t).norm();
 
-            if (0.850f > diff)
+            if (gps_sparsity_threshold > diff)
             {
                 g2o::EdgeGPS* gps(*next);
                 gps_buffer.erase(next);
@@ -817,13 +828,22 @@ void HyperGraphSclamOptimizer::MakeGPSSparse()
 void HyperGraphSclamOptimizer::GPSFiltering()
 {
     // no displacement
-    RemoveUndesiredDisplacements(1.2f);
+    if (0.01 < fake_gps_clustering_distance)
+    {
+		RemoveUndesiredDisplacements(fake_gps_clustering_distance);
+    }
 
     // sparse!
-    MakeGPSSparse();
+    if (0.01 < gps_sparsity_threshold)
+    {
+    	MakeGPSSparse();
+    }
 
     // no displacement
-    RemoveUndesiredDisplacements(1.2f);
+    if (0.01 < fake_gps_clustering_distance)
+    {
+		RemoveUndesiredDisplacements(fake_gps_clustering_distance);
+    }
 }
 
 
@@ -1151,7 +1171,7 @@ void HyperGraphSclamOptimizer::LoadHyperGraphToOptimizer()
             // push the new vertex to the optimizer
             AddVertex(ss);
         }
-        else if ("ODOM_EDGE" == tag)
+        else if ("ODOM_EDGE" == tag && use_odometry)
         {
             if (0 != odom_counter)
             {
@@ -1308,47 +1328,52 @@ void HyperGraphSclamOptimizer::SaveCorrectedVertices()
     g2o::SparseOptimizer::VertexIDMap::iterator it(optimizer->vertices().begin());
     g2o::SparseOptimizer::VertexIDMap::iterator end(optimizer->vertices().end());
 
+    std::map<double, g2o::VertexSE2*> sorted_vertices;
+
     while (end != it)
     {
-        // downcast to the base vertex
-        g2o::VertexSE2* v = dynamic_cast<g2o::VertexSE2*>(it->second);
+        g2o::VertexSE2 *v = dynamic_cast<g2o::VertexSE2*>(it->second);
 
         if (nullptr != v && start_id < unsigned(v->id()))
         {
-            Eigen::Vector3d p(v->estimate().toVector());
-
-            // build the base
-            p[0] += gps_origin[0];
-            p[1] += gps_origin[1];
-
-            double a = p[2];
-            double sina = std::sin(a) * 0.05;
-            double cosa = std::cos(a) * 0.05;
-
-            std::pair<double, unsigned> time_type(id_time_type_map.at(unsigned(v->id())));
-            double t = time_type.first;
-            StampedMessageType msg_type = StampedMessageType(time_type.second);
-
-            // write to the output file
-            car_poses << std::fixed << p[0] << " " << p[1] << " " << p[2] << " " << t << " " << cosa << " " << sina << "\n";
-
-            switch (msg_type)
-            {
-                case StampedVelodyneMessage:
-                    velodyne_poses << std::fixed << p[0] << " " << p[1] << " " << p[2] << " " << t << " " << cosa << " " << sina << "\n";
-                    break;
-                case StampedBumblebeeMessage:
-                    bumblebee_poses << std::fixed << p[0] << " " << p[1] << " " << p[2] << " " << t << " " << cosa << " " << sina << "\n";
-                    break;
-                case StampedSICKMessage:
-                    sick_poses << std::fixed << p[0] << " " << p[1] << " " << p[2] << " " << t << " " << cosa << " " << sina << "\n";
-                default:
-                    break;
-            }
+            double t = id_time_type_map.at(v->id()).first;
+            sorted_vertices[t] = v;
         }
-
-        // go to the next vertex
         ++it;
+    }
+
+    for (std::pair<const double, g2o::VertexSE2*> &entry: sorted_vertices)
+    {
+        g2o::VertexSE2 *v = entry.second;
+        Eigen::Vector3d p(v->estimate().toVector());
+
+        p[0] += gps_origin[0];
+        p[1] += gps_origin[1];
+
+        double a = p[2];
+        double sina = std::sin(a) * 0.05;
+        double cosa = std::cos(a) * 0.05;
+
+        std::pair<double, unsigned> time_type {id_time_type_map.at(unsigned(v->id())) };
+        double t = time_type.first;
+        StampedMessageType msg_type = StampedMessageType(time_type.second);
+
+        // write to the output file
+        car_poses << std::fixed << p[0] << " " << p[1] << " " << p[2] << " " << t << " " << cosa << " " << sina << "\n";
+
+        switch (msg_type)
+        {
+            case StampedVelodyneMessage:
+                velodyne_poses << std::fixed << p[0] << " " << p[1] << " " << p[2] << " " << t << " " << cosa << " " << sina << "\n";
+                break;
+            case StampedBumblebeeMessage:
+                bumblebee_poses << std::fixed << p[0] << " " << p[1] << " " << p[2] << " " << t << " " << cosa << " " << sina << "\n";
+                break;
+            case StampedSICKMessage:
+                sick_poses << std::fixed << p[0] << " " << p[1] << " " << p[2] << " " << t << " " << cosa << " " << sina << "\n";
+            default:
+                break;
+        }
     }
 
     // close the output files

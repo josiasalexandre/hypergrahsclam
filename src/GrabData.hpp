@@ -34,8 +34,8 @@ namespace hyper {
 
 #define MAXIMUM_VEL_SCANS 0
 #define LOOP_REQUIRED_TIME 300.0
-#define LOOP_REQUIRED_SQR_DISTANCE 25.0
-#define ICP_THREADS_POOL_SIZE 3
+#define LOOP_REQUIRED_DISTANCE 5.0
+#define ICP_THREADS_POOL_SIZE 12
 #define ICP_THREAD_BLOCK_SIZE 400
 #define LIDAR_ODOMETRY_MIN_DISTANCE 0.3
 #define VISUAL_ODOMETRY_MIN_DISTANCE 0.1
@@ -103,7 +103,7 @@ namespace hyper {
             // parameters
             unsigned maximum_vel_scans;
             double loop_required_time;
-            double loop_required_sqr_distance;
+            double loop_required_distance;
             unsigned icp_threads_pool_size;
             unsigned icp_thread_block_size;
             double lidar_odometry_min_distance;
@@ -111,8 +111,21 @@ namespace hyper {
             double icp_translation_confidence_factor;
             bool save_accumulated_point_clouds;
 
+            bool use_velodyne_odometry;
+            bool use_sick_odometry;
+            bool use_bumblebee_odometry;
+            
+            bool use_velodyne_loop;
+            bool use_sick_loop;
+            bool use_bumblebee_loop;
+
+            bool use_fake_gps;
+
             // separate the gps, sick and velodyne messages
             void SeparateMessages();
+
+            // get the gps antena position in relation to sensor board
+            void SetGPSPose(std::string carmen_home);
 
             // get the gps estimation
             g2o::SE2 GetNearestGPSMeasure(
@@ -154,11 +167,14 @@ namespace hyper {
             // iterate over the entire message list and build the measures and estimates
             void BuildGPSMeasures();
 
+            // iterate over the entire gps list and build the angles based on gps positions
+            void BuildFakeGPSMeasures();
+
             // iterate over the entire message list and build the measures and estimates
             void BuildOdometryMeasures();
 
             // build the initial estimates
-            void BuildOdometryEstimates();
+            void BuildOdometryEstimates(bool gps_based);
 
             // build an icp measure
             bool BuildLidarOdometryMeasure(
@@ -225,10 +241,10 @@ namespace hyper {
             void SaveXSENSEdges(std::ofstream &os);
 
             // save the gps edges
-            void SaveGPSEstimates();
+            void SaveGPSEstimates(std::string filename, bool original);
 
             // save icp edges
-            void SaveLidarEdges(const std::string &msg_name, std::ofstream &os, const StampedLidarPtrVector &lidar_messages);
+            void SaveLidarEdges(const std::string &msg_name, std::ofstream &os, const StampedLidarPtrVector &lidar_messages, bool use_lidar_odometry, bool use_lidar_loop);
 
             // save visual odometry edges
             void SaveVisualOdometryEdges(std::ofstream &os);
@@ -266,7 +282,7 @@ namespace hyper {
             ~GrabData();
 
             // configuration
-            void Configure(std::string config_filename);
+            void Configure(std::string config_filename, std::string carmen_ini);
 
             // parse the log file
             bool ParseLogFile(const std::string &input_filename);
